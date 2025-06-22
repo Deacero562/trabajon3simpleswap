@@ -1,81 +1,174 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @notice Interface estándar ERC20 simplificada
 interface IERC20 {
+    /// @notice Total supply of tokens
     function totalSupply() external view returns (uint256);
 
+    /// @notice Returns the balance of an account
+    /// @param account Address of the token holder
     function balanceOf(address account) external view returns (uint256);
 
+    /// @notice Transfer tokens to an address
+    /// @param to Recipient address
+    /// @param amount Amount to transfer
+    /// @return success True if transfer succeeded
     function transfer(address to, uint256 amount) external returns (bool);
 
+    /// @notice Returns allowance from owner to spender
+    /// @param owner Token owner address
+    /// @param spender Spender address
     function allowance(address owner, address spender) external view returns (uint256);
 
+    /// @notice Approve spender to spend tokens
+    /// @param spender Spender address
+    /// @param amount Amount approved
+    /// @return success True if approve succeeded
     function approve(address spender, uint256 amount) external returns (bool);
 
+    /// @notice Transfer tokens from one address to another using allowance
+    /// @param from Sender address
+    /// @param to Recipient address
+    /// @param amount Amount to transfer
+    /// @return success True if transfer succeeded
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 
+    /// @notice Emitted on token transfers
     event Transfer(address indexed from, address indexed to, uint256 value);
 
+    /// @notice Emitted on approval updates
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
+/// @title ERC20 token for representing liquidity shares
 contract LiquidityToken is IERC20 {
+    /// @notice Token name
     string public name = "Liquidity Token";
+
+    /// @notice Token symbol
     string public symbol = "LQT";
+
+    /// @notice Number of decimals used
     uint8 public decimals = 18;
+
     uint256 private _totalSupply;
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
+    /// @notice Emitted when liquidity is added (minted)
+    /// @param to Address receiving liquidity tokens
+    /// @param amount Amount of liquidity tokens minted
+    event AddLiquidity(address indexed to, uint256 amount);
+
+    /// @notice Emitted when liquidity is removed (burned)
+    /// @param from Address burning liquidity tokens
+    /// @param amount Amount of liquidity tokens burned
+    event RemoveLiquidity(address indexed from, uint256 amount);
+
+    /// @notice Emitted on token swaps (placeholder, to be emitted by DEX contract)
+    event Swap(address indexed sender, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, address to);
+
+    // Simple reentrancy guard mutex
+    uint256 private _unlocked = 1;
+    modifier nonReentrant() {
+        require(_unlocked == 1, "LiquidityToken: reentrant call");
+        _unlocked = 0;
+        _;
+        _unlocked = 1;
+    }
+
+    /// @notice Returns total token supply
     function totalSupply() external view override returns (uint256) {
         return _totalSupply;
     }
 
+    /// @notice Returns balance of given account
+    /// @param account Address to query
     function balanceOf(address account) external view override returns (uint256) {
         return _balances[account];
     }
 
-    function transfer(address to, uint256 amount) external override returns (bool) {
-        require(_balances[msg.sender] >= amount, "Balance too low");
+    /// @notice Transfer tokens to another address
+    /// @param to Recipient address
+    /// @param amount Amount to transfer
+    /// @return success True if transfer succeeded
+    function transfer(address to, uint256 amount) external override nonReentrant returns (bool) {
+        require(to != address(0), "LiquidityToken: transfer to zero address");
+        require(_balances[msg.sender] >= amount, "LiquidityToken: insufficient balance");
+
         _balances[msg.sender] -= amount;
         _balances[to] += amount;
+
         emit Transfer(msg.sender, to, amount);
         return true;
     }
 
+    /// @notice Returns remaining allowance for spender from owner
+    /// @param owner Owner address
+    /// @param spender Spender address
     function allowance(address owner, address spender) external view override returns (uint256) {
         return _allowances[owner][spender];
     }
 
-    function approve(address spender, uint256 amount) external override returns (bool) {
+    /// @notice Approve spender to spend tokens on caller's behalf
+    /// @param spender Spender address
+    /// @param amount Amount to approve
+    /// @return success True if approve succeeded
+    function approve(address spender, uint256 amount) external override nonReentrant returns (bool) {
+        require(spender != address(0), "LiquidityToken: approve to zero address");
+
         _allowances[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external override returns (bool) {
-        require(_balances[from] >= amount, "Balance too low");
-        require(_allowances[from][msg.sender] >= amount, "Allowance exceeded");
+    /// @notice Transfer tokens from one address to another using allowance
+    /// @param from Source address
+    /// @param to Destination address
+    /// @param amount Amount to transfer
+    /// @return success True if transfer succeeded
+    function transferFrom(address from, address to, uint256 amount) external override nonReentrant returns (bool) {
+        require(to != address(0), "LiquidityToken: transfer to zero address");
+        require(_balances[from] >= amount, "LiquidityToken: insufficient balance");
+        require(_allowances[from][msg.sender] >= amount, "LiquidityToken: allowance exceeded");
+
         _allowances[from][msg.sender] -= amount;
         _balances[from] -= amount;
         _balances[to] += amount;
+
         emit Transfer(from, to, amount);
         return true;
     }
 
-    // Mint function - only for internal use or add own access control
-    function mint(address to, uint256 amount) external {
+    /// @notice Mint new liquidity tokens
+    /// @dev In a real contract, add access control to this function
+    /// @param to Address to mint tokens to
+    /// @param amount Amount to mint
+    function mint(address to, uint256 amount) external nonReentrant {
+        require(to != address(0), "LiquidityToken: mint to zero address");
+        require(amount > 0, "LiquidityToken: mint zero amount");
+
         _totalSupply += amount;
         _balances[to] += amount;
+
         emit Transfer(address(0), to, amount);
+        emit AddLiquidity(to, amount);
     }
 
-    // Burn function
-    function burn(address from, uint256 amount) external {
-        require(_balances[from] >= amount, "Insufficient balance");
+    /// @notice Burn liquidity tokens from an address
+    /// @param from Address whose tokens will be burned
+    /// @param amount Amount to burn
+    function burn(address from, uint256 amount) external nonReentrant {
+        require(from != address(0), "LiquidityToken: burn from zero address");
+        require(amount > 0, "LiquidityToken: burn zero amount");
+        require(_balances[from] >= amount, "LiquidityToken: insufficient balance");
+
         _balances[from] -= amount;
         _totalSupply -= amount;
+
         emit Transfer(from, address(0), amount);
+        emit RemoveLiquidity(from, amount);
     }
 }
