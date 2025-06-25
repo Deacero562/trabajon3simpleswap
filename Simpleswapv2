@@ -35,9 +35,10 @@ contract SimpleSwap {
         uint deadline
     ) external returns (uint amountA, uint amountB, uint liquidity) {
         require(block.timestamp <= deadline, "Transaction expired");
-        require((_tokenA == tokenA && _tokenB == tokenB) || (_tokenA == tokenB && _tokenB == tokenA), "Invalid token pair");
+        require(_tokenA == tokenA && _tokenB == tokenB, "Invalid token pair");
 
-        (amountA, amountB) = (_tokenA == tokenA) ? (amountADesired, amountBDesired) : (amountBDesired, amountADesired);
+        amountA = amountADesired;
+        amountB = amountBDesired;
 
         require(amountA >= amountAMin && amountB >= amountBMin, "Insufficient token amounts");
 
@@ -68,7 +69,7 @@ contract SimpleSwap {
         uint deadline
     ) external returns (uint amountA, uint amountB) {
         require(block.timestamp <= deadline, "Transaction expired");
-        require((_tokenA == tokenA && _tokenB == tokenB) || (_tokenA == tokenB && _tokenB == tokenA), "Invalid token pair");
+        require(_tokenA == tokenA && _tokenB == tokenB, "Invalid token pair");
 
         uint256 totalSupply = liquidityToken.totalSupply();
         liquidityToken.burn(msg.sender, liquidity);
@@ -100,24 +101,17 @@ contract SimpleSwap {
 
         address tokenIn = path[0];
         address tokenOut = path[1];
-        require((tokenIn == tokenA || tokenIn == tokenB) && (tokenOut == tokenA || tokenOut == tokenB) && tokenIn != tokenOut, "Invalid path");
+        require(tokenIn == tokenA && tokenOut == tokenB, "Invalid path");
 
         IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
 
-        (uint reserveIn, uint reserveOut) = tokenIn == tokenA ? (reserveA, reserveB) : (reserveB, reserveA);
-
-        uint amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
+        uint amountOut = getAmountOut(amountIn, reserveA, reserveB);
         require(amountOut >= amountOutMin, "Insufficient output amount");
 
         IERC20(tokenOut).transfer(to, amountOut);
 
-        if (tokenIn == tokenA) {
-            reserveA += amountIn;
-            reserveB -= amountOut;
-        } else {
-            reserveB += amountIn;
-            reserveA -= amountOut;
-        }
+        reserveA += amountIn;
+        reserveB -= amountOut;
 
         emit Swap(msg.sender, tokenIn, tokenOut, amountIn, amountOut, to);
 
@@ -128,8 +122,8 @@ contract SimpleSwap {
 
     /// @notice Returns the price of tokenA in terms of tokenB
     function getPrice(address _tokenA, address _tokenB) external view returns (uint price) {
-        require((_tokenA == tokenA && _tokenB == tokenB) || (_tokenA == tokenB && _tokenB == tokenA), "Invalid pair");
-        price = (_tokenA == tokenA) ? (reserveB * 1e18) / reserveA : (reserveA * 1e18) / reserveB;
+        require(_tokenA == tokenA && _tokenB == tokenB, "Invalid pair");
+        price = (reserveB * 1e18) / reserveA;
     }
 
     /// @notice Calculates the output amount for a given input amount using constant product formula
