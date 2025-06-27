@@ -1,15 +1,15 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity >=0.8.3 <0.9.0;
 
+/// @title SimpleSwap
+/// @author Sergio Gallo
+/// @notice A simple DEX allowing token swaps and liquidity provisioning between two ERC20 tokens
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 using SafeERC20 for IERC20;
 
-/// @title SimpleSwap
-/// @author You
-/// @notice A simple DEX allowing token swaps and liquidity provisioning between two ERC20 tokens
 contract SimpleSwap is ERC20 {
     uint256 private constant MINIMUM_LIQUIDITY = 0;
     uint256 private constant FEE_NUMERATOR = 997;
