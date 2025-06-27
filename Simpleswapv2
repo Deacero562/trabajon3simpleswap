@@ -160,7 +160,7 @@ contract SimpleSwap is ERC20 {
     }
 
     /// @notice Swaps an exact amount of tokens for another token
-    function swapExactTokensForTokens(
+    function efficientSwap(
         uint256 amountIn,
         uint256 amountOutMin,
         address[] calldata path,
@@ -182,14 +182,20 @@ contract SimpleSwap is ERC20 {
         require(amountOut >= amountOutMin, "Slippage exceeded");
 
         if (data.reversed) {
-            IERC20(data.tokenA).safeTransfer(to, amountOut);
+            // tokenB entra al contrato (incrementa reserva)
             IERC20(data.tokenB).safeTransferFrom(msg.sender, address(this), amountIn);
-            reserve[data.tokenA][data.tokenB] -= amountIn;
-            reserve[data.tokenB][data.tokenA] += amountOut;
+            reserve[data.tokenB][data.tokenA] += amountIn;
+
+            // tokenA sale del contrato (decrementa reserva)
+            IERC20(data.tokenA).safeTransfer(to, amountOut);
+            reserve[data.tokenA][data.tokenB] -= amountOut;
         } else {
+            // tokenA entra al contrato (incrementa reserva)
             IERC20(data.tokenA).safeTransferFrom(msg.sender, address(this), amountIn);
-            IERC20(data.tokenB).safeTransfer(to, amountOut);
             reserve[data.tokenA][data.tokenB] += amountIn;
+
+            // tokenB sale del contrato (decrementa reserva)
+            IERC20(data.tokenB).safeTransfer(to, amountOut);
             reserve[data.tokenB][data.tokenA] -= amountOut;
         }
 
