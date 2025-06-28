@@ -1,123 +1,127 @@
-# 🦄 SimpleSwap
+# SimpleUniswapRouter
 
-**SimpleSwap** es un contrato inteligente de intercambio descentralizado (DEX) inspirado en Uniswap, que permite agregar y remover liquidez, intercambiar tokens ERC-20 y consultar precios y cantidades resultantes.
+## Descripción
 
-## ✨ Características principales
+`SimpleUniswapRouter` es un contrato inteligente que implementa un intercambio descentralizado (DEX) simple inspirado en Uniswap V2. Permite a los usuarios añadir y remover liquidez entre pares de tokens ERC20, así como realizar swaps de tokens a través de rutas personalizadas.
 
-- Permite agregar y remover liquidez a pares de tokens.
-- Calcula precios automáticamente según reservas.
-- Admite swaps entre dos tokens ERC-20.
-- Implementa un token ERC-20 personalizado para representar liquidez (`LiquidityToken`).
-- Seguridad básica con protección contra reentradas.
-- Eventos de seguimiento (`AddLiquidity`, `RemoveLiquidity`, `Swap`).
-- Validaciones estrictas (`require`).
+Incluye un token de liquidez interno (`LiquidityToken`) para representar la participación de cada usuario en el pool.
 
 ---
 
-## 🧱 Contratos
+## Contratos principales
 
-### `LiquidityToken.sol`
+- **LiquidityToken:** Token ERC20 personalizado que representa la participación de un usuario en un pool de liquidez. Permite mint y burn de tokens cuando se añaden o retiran liquidez.
 
-Implementa un token ERC20 minimalista con funciones de:
-
-- `mint()` para emitir tokens de liquidez (solo usado internamente).
-- `burn()` para destruir tokens al remover liquidez.
-- `transfer`, `approve`, `transferFrom` con validaciones y protección `nonReentrant`.
-
-### `SimpleSwap.sol`
-
-Contrato principal que maneja:
-
-- Pares de tokens (con almacenamiento interno de reservas).
-- Agregado y retiro de liquidez (`addLiquidity`, `removeLiquidity`).
-- Swaps con validación de slippage (`swapExactTokensForTokens`).
-- Consulta de precios (`getPrice`) y simulación de swaps (`getAmountOut`).
+- **SimpleUniswapRouter:** Contrato principal que gestiona los pools, las reservas, las operaciones de añadir/remover liquidez y el intercambio de tokens.
 
 ---
 
-## 📘 Funciones principales
+## Funcionalidades principales
 
-### 🔹 `addLiquidity(...)`
-
-Agrega liquidez a un par de tokens. Emite `AddLiquidity`.
+### Añadir liquidez
 
 ```solidity
 function addLiquidity(
-  address tokenA,
-  address tokenB,
-  uint amountADesired,
-  uint amountBDesired,
-  uint amountAMin,
-  uint amountBMin,
-  address to,
-  uint deadline
-) external returns (uint amountA, uint amountB, uint liquidity);
+    address tokenA,
+    address tokenB,
+    uint256 amountADesired,
+    uint256 amountBDesired,
+    uint256 amountAMin,
+    uint256 amountBMin,
+    address to,
+    uint256 deadline
+) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 
-🔹 removeLiquidity(...)
+    Añade liquidez a un par de tokens.
 
-Retira liquidez y devuelve tokens al usuario. Emite RemoveLiquidity.
+    Calcula automáticamente las cantidades óptimas según las reservas existentes.
+
+    Minta tokens de liquidez proporcionales al aporte.
+
+    Requiere aprobación previa para transferir los tokens del usuario al contrato.
+
+Remover liquidez
 
 function removeLiquidity(
-  address tokenA,
-  address tokenB,
-  uint liquidity,
-  uint amountAMin,
-  uint amountBMin,
-  address to,
-  uint deadline
-) external returns (uint amountA, uint amountB);
+    address tokenA,
+    address tokenB,
+    uint256 liquidity,
+    uint256 amountAMin,
+    uint256 amountBMin,
+    address to,
+    uint256 deadline
+) external returns (uint256 amountA, uint256 amountB);
 
-🔹 swapExactTokensForTokens(...)
+    Permite retirar tokens del pool devolviendo tokens de liquidez.
 
-Intercambia tokens de entrada por salida exacta. Emite Swap.
+    Calcula las cantidades según la proporción de liquidez retirada.
+
+    Transfiere los tokens retirados a la dirección especificada.
+
+Realizar swap exacto de tokens
 
 function swapExactTokensForTokens(
-  uint amountIn,
-  uint amountOutMin,
-  address[] calldata path,
-  address to,
-  uint deadline
-) external returns (uint amountOut);
+    uint256 amountIn,
+    uint256 amountOutMin,
+    address[] calldata path,
+    address to,
+    uint256 deadline
+) external returns (uint256[] memory amounts);
 
-🔹 getPrice(tokenA, tokenB)
+    Intercambia una cantidad exacta de tokens amountIn siguiendo una ruta definida (path).
 
-Devuelve el precio actual de tokenA en términos de tokenB.
+    Requiere que la salida mínima amountOutMin se cumpla o la transacción revierte.
 
-function getPrice(address tokenA, address tokenB) external view returns (uint);
+    Actualiza reservas y transfiere los tokens correspondientes.
 
-🔹 getAmountOut(amountIn, reserveIn, reserveOut)
+Consultas auxiliares
 
-Calcula la cantidad de salida que se recibiría por amountIn.
-🔐 Seguridad
+    getReserves(tokenA, tokenB): Devuelve las reservas actuales de ambos tokens en el pool.
 
-    Protección contra reentradas (nonReentrant).
+    getAmountOut(amountIn, reserveIn, reserveOut): Calcula la cantidad de salida para un swap dado el input y las reservas.
 
-    Validaciones de timestamp (deadline) y slippage (amountOutMin).
+    getPrice(tokenA, tokenB): Retorna el precio actual (tokenB/tokenA) en el pool, con 18 decimales de precisión.
 
-    Validación de tokens nulos o montos inválidos.
+Token de Liquidez (LiquidityToken)
 
-🧪 Ejemplo de uso
+    ERC20 estándar con funciones adicionales:
 
-    Aprobar los tokens a intercambiar:
+        mint(address to, uint256 amount): Permite crear nuevos tokens.
 
-IERC20(tokenA).approve(address(simpleSwap), amount);
-IERC20(tokenB).approve(address(simpleSwap), amount);
+        burn(address from, uint256 amount): Permite quemar tokens existentes.
+
+Notas importantes
+
+    Todas las transferencias de tokens requieren que el usuario haya aprobado previamente al contrato para gastar sus tokens (approve).
+
+    Los deadlines evitan la ejecución fuera de tiempo para proteger contra front-running y otros ataques.
+
+    El fee aplicado a swaps es del 0.3% (997/1000).
+
+Uso básico
 
     Agregar liquidez:
 
-simpleSwap.addLiquidity(tokenA, tokenB, 1000, 1000, 900, 900, msg.sender, block.timestamp + 300);
+        Aprueba el contrato para gastar tus tokens A y B.
 
-    Intercambiar tokens:
+        Llama a addLiquidity con las cantidades deseadas.
 
-address ;
-path[0] = tokenA;
-path[1] = tokenB;
+    Realizar swap:
 
-simpleSwap.swapExactTokensForTokens(500, 450, path, msg.sender, block.timestamp + 300);
+        Aprueba el contrato para gastar el token de entrada.
 
-📁 Estructura del proyecto
+        Llama a swapExactTokensForTokens con la ruta deseada y cantidades.
 
-📦 SimpleSwap
- ┣ 📜 SimpleSwap.sol
- ┣ 📜 LiquidityToken.sol
- ┗ 📜 README.md
+    Remover liquidez:
+
+        Llama a removeLiquidity con la cantidad de tokens de liquidez a quemar.
+
+Requisitos para compilar y desplegar
+
+    Solidity ^0.8.20
+
+    Compatible con tokens ERC20 estándar.
+
+Autor
+
+Sergio Gallo
