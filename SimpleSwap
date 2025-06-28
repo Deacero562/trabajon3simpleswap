@@ -1,139 +1,278 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity >=0.8.3 <0.9.0;
 
+/// @title SimpleSwap
+/// @author Sergio Gallo
+/// @notice A simple DEX allowing token swaps and liquidity provisioning between two ERC20 tokens
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @title SimpleSwapV2
-/// @notice Intercambio básico entre dos tokens ERC20 con funcionalidad de liquidez
-contract SimpleSwapV2 {
-    using SafeERC20 for IERC20;
+using SafeERC20 for IERC20;
 
-    IERC20 public immutable tokenX;
-    IERC20 public immutable tokenY;
+contract SimpleSwap is ERC20 {
+    uint256 private constant MINIMUM_LIQUIDITY = 0;
+    uint256 private constant FEE_NUMERATOR = 997;
+    uint256 private constant FEE_DENOMINATOR = 1000;
 
-    uint256 public reserveX;
-    uint256 public reserveY;
+    bool private locked;
 
-    mapping(address => uint256) public liquidity;
-    uint256 public totalLiquidity;
+    /// @dev Mapping of token pair reserves (tokenA => tokenB => amount)
+    mapping(address => mapping(address => uint256)) public reserve;
 
-    uint256 private constant FEE = 3; // 0.3% fee
-    uint256 private constant FEE_BASE = 1000;
+    /// @notice Deploys the liquidity token
+    constructor() ERC20("Liquidity Token", "LTK") {}
 
-    event LiquidityProvided(address indexed provider, uint256 amountX, uint256 amountY, uint256 liquidityMinted);
-    event LiquidityRemoved(address indexed provider, uint256 amountX, uint256 amountY, uint256 liquidityBurned);
-    event TokenSwapped(address indexed user, address indexed fromToken, address indexed toToken, uint256 amountIn, uint256 amountOut);
-
-    constructor(address _tokenX, address _tokenY) {
-        require(_tokenX != _tokenY, "Tokens must differ");
-        require(_tokenX != address(0) && _tokenY != address(0), "Zero address");
-        tokenX = IERC20(_tokenX);
-        tokenY = IERC20(_tokenY);
+    modifier nonReentrant() {
+        require(!locked, "No reentrancy");
+        locked = true;
+        _;
+        locked = false;
     }
 
-    function provideLiquidity(uint256 amountX, uint256 amountY) external returns (uint256 liquidityMinted) {
-        require(amountX > 0 && amountY > 0, "Zero amount");
+    modifier isNotExpired(uint256 deadline) {
+        require(block.timestamp <= deadline, "Transaction expired");
+        _;
+    }
 
-        tokenX.safeTransferFrom(msg.sender, address(this), amountX);
-        tokenY.safeTransferFrom(msg.sender, address(this), amountY);
+    struct TokenPairData {
+        address tokenA;
+        address tokenB;
+        uint256 reserveA;
+        uint256 reserveB;
+        uint256 amountA;
+        uint256 amountB;
+        uint256 amountADesired;
+        uint256 amountBDesired;
+        uint256 amountAMin;
+        uint256 amountBMin;
+        bool reversed;
+    }
 
-        if (totalLiquidity == 0) {
-            liquidityMinted = sqrt(amountX * amountY);
+    /// @notice Adds liquidity to a token pair pool
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    )
+        external
+        nonReentrant
+        isNotExpired(deadline)
+        returns (uint256 amountA, uint256 amountB, uint256 liquidity)
+    {
+        require(to != address(0), "Invalid address");
+
+        TokenPairData memory data = reorderTokens(tokenA, tokenB);
+        data.amountADesired = data.reversed ? amountBDesired : amountADesired;
+        data.amountBDesired = data.reversed ? amountADesired : amountBDesired;
+        data.amountAMin = data.reversed ? amountBMin : amountAMin;
+        data.amountBMin = data.reversed ? amountAMin : amountBMin;
+
+        bool isInitial = data.reserveA == 0 && data.reserveB == 0;
+
+        if (isInitial) {
+            data.amountA = data.amountADesired;
+            data.amountB = data.amountBDesired;
+            liquidity = sqrt(data.amountA * data.amountB);
         } else {
-            liquidityMinted = min(
-                (amountX * totalLiquidity) / reserveX,
-                (amountY * totalLiquidity) / reserveY
-            );
-        }
-
-        require(liquidityMinted > 0, "Zero liquidity minted");
-
-        liquidity[msg.sender] += liquidityMinted;
-        totalLiquidity += liquidityMinted;
-
-        reserveX += amountX;
-        reserveY += amountY;
-
-        emit LiquidityProvided(msg.sender, amountX, amountY, liquidityMinted);
-    }
-
-    function removeLiquidity(uint256 liquidityAmount) external returns (uint256 amountX, uint256 amountY) {
-        require(liquidity[msg.sender] >= liquidityAmount, "Insufficient liquidity");
-
-        amountX = (liquidityAmount * reserveX) / totalLiquidity;
-        amountY = (liquidityAmount * reserveY) / totalLiquidity;
-
-        require(amountX > 0 && amountY > 0, "Zero amounts");
-
-        liquidity[msg.sender] -= liquidityAmount;
-        totalLiquidity -= liquidityAmount;
-
-        reserveX -= amountX;
-        reserveY -= amountY;
-
-        tokenX.safeTransfer(msg.sender, amountX);
-        tokenY.safeTransfer(msg.sender, amountY);
-
-        emit LiquidityRemoved(msg.sender, amountX, amountY, liquidityAmount);
-    }
-
-    function swap(address fromToken, uint256 amountIn) external returns (uint256 amountOut) {
-        require(amountIn > 0, "Zero input");
-        require(fromToken == address(tokenX) || fromToken == address(tokenY), "Invalid token");
-
-        bool isXtoY = fromToken == address(tokenX);
-
-        IERC20 inputToken = isXtoY ? tokenX : tokenY;
-        IERC20 outputToken = isXtoY ? tokenY : tokenX;
-
-        uint256 reserveIn = isXtoY ? reserveX : reserveY;
-        uint256 reserveOut = isXtoY ? reserveY : reserveX;
-
-        inputToken.safeTransferFrom(msg.sender, address(this), amountIn);
-
-        uint256 amountInWithFee = (amountIn * (FEE_BASE - FEE)) / FEE_BASE;
-        amountOut = (amountInWithFee * reserveOut) / (reserveIn + amountInWithFee);
-
-        require(amountOut > 0 && amountOut < reserveOut, "Invalid output");
-
-        outputToken.safeTransfer(msg.sender, amountOut);
-
-        if (isXtoY) {
-            reserveX += amountIn;
-            reserveY -= amountOut;
-        } else {
-            reserveY += amountIn;
-            reserveX -= amountOut;
-        }
-
-        emit TokenSwapped(msg.sender, address(inputToken), address(outputToken), amountIn, amountOut);
-    }
-
-    function getPrice(address fromToken) external view returns (uint256 price) {
-        require(fromToken == address(tokenX) || fromToken == address(tokenY), "Invalid token");
-
-        if (fromToken == address(tokenX)) {
-            price = (reserveY * 1e18) / reserveX;
-        } else {
-            price = (reserveX * 1e18) / reserveY;
-        }
-    }
-
-    function sqrt(uint256 y) private pure returns (uint256 z) {
-        if (y > 3) {
-            z = y;
-            uint256 x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
+            uint256 amountBOptimal = (data.amountADesired * data.reserveB) / data.reserveA;
+            if (amountBOptimal <= data.amountBDesired) {
+                require(amountBOptimal >= data.amountBMin, "TokenB slippage");
+                data.amountA = data.amountADesired;
+                data.amountB = amountBOptimal;
+            } else {
+                uint256 amountAOptimal = (data.amountBDesired * data.reserveA) / data.reserveB;
+                require(amountAOptimal >= data.amountAMin, "TokenA slippage");
+                data.amountA = amountAOptimal;
+                data.amountB = data.amountBDesired;
             }
-        } else if (y != 0) {
-            z = 1;
+
+            uint256 totalSupplyLTK = totalSupply();
+            uint256 liquidityA = (data.amountA * totalSupplyLTK) / data.reserveA;
+            uint256 liquidityB = (data.amountB * totalSupplyLTK) / data.reserveB;
+            liquidity = liquidityA < liquidityB ? liquidityA : liquidityB;
+        }
+
+        require(liquidity > 0, "Liquidity too low");
+
+        IERC20(data.tokenA).safeTransferFrom(msg.sender, address(this), data.amountA);
+        IERC20(data.tokenB).safeTransferFrom(msg.sender, address(this), data.amountB);
+        _mint(to, liquidity);
+        if (isInitial) {
+            _mint(address(this), MINIMUM_LIQUIDITY);
+        }
+
+        reserve[data.tokenA][data.tokenB] += data.amountA;
+        reserve[data.tokenB][data.tokenA] += data.amountB;
+
+        emit LiquidityAdded(msg.sender, to, data.tokenA, data.tokenB, data.amountA, data.amountB, liquidity);
+
+        amountA = data.reversed ? data.amountB : data.amountA;
+        amountB = data.reversed ? data.amountA : data.amountB;
+    }
+
+    /// @notice Removes liquidity from the pool
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    )
+        external
+        nonReentrant
+        isNotExpired(deadline)
+        returns (uint256 amountA, uint256 amountB)
+    {
+        require(to != address(0), "Invalid address");
+        require(liquidity > 0, "Zero liquidity");
+
+        TokenPairData memory data = reorderTokens(tokenA, tokenB);
+        data.amountAMin = data.reversed ? amountBMin : amountAMin;
+        data.amountBMin = data.reversed ? amountAMin : amountBMin;
+
+        uint256 totalSupplyLTK = totalSupply();
+        data.amountA = (liquidity * data.reserveA) / totalSupplyLTK;
+        data.amountB = (liquidity * data.reserveB) / totalSupplyLTK;
+
+        require(data.amountA >= data.amountAMin, "TokenA slippage");
+        require(data.amountB >= data.amountBMin, "TokenB slippage");
+
+        _burn(msg.sender, liquidity);
+
+        IERC20(data.tokenA).safeTransfer(to, data.amountA);
+        IERC20(data.tokenB).safeTransfer(to, data.amountB);
+
+        reserve[data.tokenA][data.tokenB] -= data.amountA;
+        reserve[data.tokenB][data.tokenA] -= data.amountB;
+
+        emit LiquidityRemoved(msg.sender, to, liquidity, data.tokenA, data.tokenB, data.amountA, data.amountB);
+
+        amountA = data.reversed ? data.amountB : data.amountA;
+        amountB = data.reversed ? data.amountA : data.amountB;
+    }
+
+    /// @notice Swaps an exact amount of tokens for another token
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    )
+        external
+        nonReentrant
+        isNotExpired(deadline)
+        returns (uint256[] memory amounts)
+    {
+        require(path.length == 2, "Only direct swaps allowed");
+        require(amountIn > 0, "Zero input");
+
+        TokenPairData memory data = reorderTokens(path[0], path[1]);
+
+        uint256 amountInWithFee = (amountIn * FEE_NUMERATOR) / FEE_DENOMINATOR;
+        uint256 amountOut = (amountInWithFee * data.reserveB) / (data.reserveA + amountInWithFee);
+        require(amountOut >= amountOutMin, "Slippage exceeded");
+
+        if (data.reversed) {
+            // tokenB entra al contrato (incrementa reserva)
+            IERC20(data.tokenB).safeTransferFrom(msg.sender, address(this), amountIn);
+            reserve[data.tokenB][data.tokenA] += amountIn;
+
+            // tokenA sale del contrato (decrementa reserva)
+            IERC20(data.tokenA).safeTransfer(to, amountOut);
+            reserve[data.tokenA][data.tokenB] -= amountOut;
+        } else {
+            // tokenA entra al contrato (incrementa reserva)
+            IERC20(data.tokenA).safeTransferFrom(msg.sender, address(this), amountIn);
+            reserve[data.tokenA][data.tokenB] += amountIn;
+
+            // tokenB sale del contrato (decrementa reserva)
+            IERC20(data.tokenB).safeTransfer(to, amountOut);
+            reserve[data.tokenB][data.tokenA] -= amountOut;
+        }
+
+        amounts = new uint256[](path.length);
+        amounts[0] = amountIn;
+        amounts[1] = amountOut;
+
+        emit SwapExecuted(msg.sender, to, path, amounts);
+    }
+
+    /// @notice Returns the price of tokenA in terms of tokenB
+    function getPrice(address tokenA, address tokenB) external view returns (uint256 price) {
+        uint256 rA = reserve[tokenA][tokenB];
+        uint256 rB = reserve[tokenB][tokenA];
+        require(rA > 0 && rB > 0, "Insufficient liquidity");
+        return (rB * 1e18) / rA;
+    }
+
+    /// @notice Returns the output amount using Uniswap-style constant product formula with fee
+    function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
+        external
+        pure
+        returns (uint256)
+    {
+        require(amountIn > 0 && reserveIn > 0 && reserveOut > 0, "Invalid input");
+        uint256 amountInWithFee = (amountIn * FEE_NUMERATOR) / FEE_DENOMINATOR;
+        return (amountInWithFee * reserveOut) / (reserveIn + amountInWithFee);
+    }
+
+    /// @dev Internal utility to reorder token addresses and fetch reserves
+    function reorderTokens(address tokenA, address tokenB) internal view returns (TokenPairData memory data) {
+        require(tokenA != tokenB, "Identical tokens");
+        data.reversed = tokenA > tokenB;
+        data.tokenA = data.reversed ? tokenB : tokenA;
+        data.tokenB = data.reversed ? tokenA : tokenB;
+        data.reserveA = reserve[data.tokenA][data.tokenB];
+        data.reserveB = reserve[data.tokenB][data.tokenA];
+    }
+
+    /// @dev Integer square root using Babylonian method
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0 || x == 1) return x;
+        uint256 z = (x / 2) + 1;
+        y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
         }
     }
 
-    function min(uint256 a, uint256 b) private pure returns (uint256) {
-        return a < b ? a : b;
-    }
+    /// @notice Emitted when liquidity is added
+    event LiquidityAdded(
+        address indexed from,
+        address indexed to,
+        address tokenA,
+        address tokenB,
+        uint256 amountA,
+        uint256 amountB,
+        uint256 liquidity
+    );
+
+    /// @notice Emitted when liquidity is removed
+    event LiquidityRemoved(
+        address indexed from,
+        address indexed to,
+        uint256 liquidity,
+        address tokenA,
+        address tokenB,
+        uint256 amountA,
+        uint256 amountB
+    );
+
+    /// @notice Emitted when a token swap is executed
+    event SwapExecuted(
+        address indexed from,
+        address indexed to,
+        address[] path,
+        uint256[] amounts
+    );
 }
