@@ -160,7 +160,7 @@ contract SimpleSwap is ERC20 {
     }
 
     /// @notice Swaps an exact amount of tokens for another token
-    function efficientSwap(
+    function swapExactTokensForTokens(
         uint256 amountIn,
         uint256 amountOutMin,
         address[] calldata path,
